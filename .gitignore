@@ -18,6 +18,13 @@ libpeerconnection.log
 testem.log
 typings/
 
+# Debug and Log files
+debug.log
+*.log
+logs/
+debug-*.log
+debug-logs/
+
 # IDEs and editors
 .vscode/
 .idea/
