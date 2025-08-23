@@ -1,25 +1,58 @@
 import { Component, signal, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { SafePipe } from './safe.pipe';
 import { environment } from '../environments/environment';
-import { createEmbeddingContext, EmbeddingContext, DashboardExperience } from 'amazon-quicksight-embedding-sdk';
+import { createEmbeddingContext, EmbeddingContext, DashboardExperience, QSearchExperience } from 'amazon-quicksight-embedding-sdk';
 import { DebugLoggerService } from '../logger';
+
+export type EmbeddingType = 'dashboard' | 'qsearch';
+
+export interface DashboardConfig {
+  url: string;
+  title: string;
+  width: string;
+  height: string;
+}
+
+export interface QSearchConfig {
+  url: string;
+  title: string;
+  width: string;
+  height: string;
+  searchPlaceholderText?: string;
+  showQIcon?: boolean;
+  showPinboard?: boolean;
+  showSearchBar?: boolean;
+}
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, SafePipe, FormsModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './app.html'
 })
 export class App implements OnInit, OnDestroy, AfterViewInit {
   @ViewChild('dashboardContainer', { static: false }) dashboardContainer!: ElementRef;
+  @ViewChild('qsearchContainer', { static: false }) qsearchContainer!: ElementRef;
 
-  protected readonly embedConfig = signal({
-    title: environment.quicksight.defaultTitle,
+  protected readonly embeddingType = signal<EmbeddingType>('dashboard');
+  
+  protected readonly dashboardConfig = signal<DashboardConfig>({
     url: environment.quicksight.defaultUrl,
-    width: environment.quicksight.defaultWidth,
-    height: environment.quicksight.defaultHeight
+    title: 'QuickSight Dashboard',
+    width: '100%',
+    height: '600px'
+  });
+
+  protected readonly qsearchConfig = signal<QSearchConfig>({
+    url: environment.quicksight.defaultUrl,
+    title: 'QuickSight Q Search',
+    width: '100%',
+    height: '400px',
+    searchPlaceholderText: 'Ask a question about your data...',
+    showQIcon: true,
+    showPinboard: true,
+    showSearchBar: true
   });
 
   protected readonly newUrl = signal('');
@@ -29,14 +62,15 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
 
   private embeddingContext: EmbeddingContext | null = null;
   private currentDashboard: DashboardExperience | null = null;
+  private currentQSearch: QSearchExperience | null = null;
   private isViewInitialized = false;
 
   constructor(private logger: DebugLoggerService) {}
 
   async ngOnInit() {
     this.logger.info('Application initializing', { 
-      defaultUrl: this.embedConfig().url,
-      defaultTitle: this.embedConfig().title 
+      embeddingType: this.embeddingType(),
+      defaultUrl: this.dashboardConfig().url
     }, 'App');
 
     try {
@@ -48,8 +82,11 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
         }
       });
       
+      // Load default configuration for the selected embedding type
+      await this.loadDefaultConfiguration();
+      
       this.logger.info('Application initialized successfully', { 
-        url: this.embedConfig().url 
+        url: this.dashboardConfig().url 
       }, 'App');
     } catch (error) {
       this.logger.error('Failed to initialize QuickSight embedding', error, 'App');
@@ -57,14 +94,27 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
+  private async loadDefaultConfiguration() {
+    const type = this.embeddingType();
+    try {
+      if (type === 'dashboard') {
+        await this.embedDashboard(this.dashboardConfig().url);
+      } else {
+        await this.embedQSearch(this.qsearchConfig().url);
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to load default ${type} configuration`, error, 'App');
+      // Don't show error to user for default loading failures
+    }
+  }
+
   ngAfterViewInit() {
     // Use a small delay to ensure the view is fully rendered
     setTimeout(() => {
       this.isViewInitialized = true;
-      this.logger.debug('View initialized, dashboard container available', {
-        containerExists: !!this.dashboardContainer,
-        containerElement: !!this.dashboardContainer?.nativeElement,
-        containerRef: this.dashboardContainer
+      this.logger.debug('View initialized, containers available', {
+        dashboardContainerExists: !!this.dashboardContainer,
+        qsearchContainerExists: !!this.qsearchContainer
       }, 'App');
     }, 50);
   }
@@ -72,33 +122,50 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
   ngOnDestroy() {
     this.logger.info('Application destroying', null, 'App');
     if (this.currentDashboard) {
-      // Clean up dashboard if needed
       this.currentDashboard = null;
       this.logger.debug('QuickSight dashboard cleaned up', null, 'App');
     }
+    if (this.currentQSearch) {
+      this.currentQSearch = null;
+      this.logger.debug('QuickSight QSearch cleaned up', null, 'App');
+    }
+  }
+
+  onEmbeddingTypeChange(type: EmbeddingType) {
+    this.embeddingType.set(type);
+    this.logger.info('Embedding type changed', { type }, 'App');
+    
+    // Clear any existing content
+    this.clearCurrentEmbedding();
+    
+    // Reset error states
+    this.errorMessage.set('');
+    this.errorDetails.set(null);
   }
 
   async updateEmbedUrl() {
     if (this.newUrl().trim()) {
       const url = this.newUrl().trim();
-      this.logger.info('Updating QuickSight dashboard URL', { 
-        oldUrl: this.embedConfig().url,
+      const type = this.embeddingType();
+      
+      this.logger.info(`Updating ${type} URL`, { 
+        oldUrl: type === 'dashboard' ? this.dashboardConfig().url : this.qsearchConfig().url,
         newUrl: url 
       }, 'App');
 
-      this.embedConfig.update(config => ({
-        ...config,
-        url: url
-      }));
-      
       try {
-        await this.embedDashboard(url);
-        this.newUrl.set('');
+        if (type === 'dashboard') {
+          this.dashboardConfig.update(config => ({ ...config, url }));
+          await this.embedDashboard(url);
+        } else {
+          this.qsearchConfig.update(config => ({ ...config, url }));
+          await this.embedQSearch(url);
+        }
+        
+      this.newUrl.set('');
         this.errorMessage.set('');
         this.errorDetails.set(null);
-        this.logger.info('Dashboard URL updated successfully', { 
-          finalUrl: url
-        }, 'App');
+        this.logger.info(`${type} URL updated successfully`, { finalUrl: url }, 'App');
       } catch (error) {
         const errorInfo = {
           message: error instanceof Error ? error.message : 'Unknown error occurred',
@@ -106,37 +173,53 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
           error: error,
           timestamp: new Date().toISOString(),
           url: url,
+          embeddingType: type,
           containerState: {
             isViewInitialized: this.isViewInitialized,
-            containerExists: !!this.dashboardContainer,
-            nativeElement: !!this.dashboardContainer?.nativeElement
+            dashboardContainerExists: !!this.dashboardContainer,
+            qsearchContainerExists: !!this.qsearchContainer
           }
         };
         
-        this.logger.error('Failed to update dashboard', errorInfo, 'App');
-        this.errorMessage.set(`Failed to update dashboard: ${errorInfo.message}`);
+        this.logger.error(`Failed to update ${type}`, errorInfo, 'App');
+        this.errorMessage.set(`Failed to update ${type}: ${errorInfo.message}`);
         this.errorDetails.set(errorInfo);
       }
     }
   }
 
   async resetToDefault() {
-    this.logger.info('Resetting to default configuration', null, 'App');
-    
-    const defaultConfig = {
-      title: environment.quicksight.defaultTitle,
-      url: environment.quicksight.defaultUrl,
-      width: environment.quicksight.defaultWidth,
-      height: environment.quicksight.defaultHeight
-    };
-    
-    this.embedConfig.set(defaultConfig);
+    const type = this.embeddingType();
+    this.logger.info(`Resetting ${type} to default configuration`, null, 'App');
     
     try {
-      await this.embedDashboard(defaultConfig.url);
+      if (type === 'dashboard') {
+        const defaultConfig = {
+          url: environment.quicksight.defaultUrl,
+          title: 'QuickSight Dashboard',
+          width: '100%',
+          height: '600px'
+        };
+        this.dashboardConfig.set(defaultConfig);
+        await this.embedDashboard(defaultConfig.url);
+      } else {
+        const defaultConfig = {
+          url: environment.quicksight.defaultUrl,
+          title: 'QuickSight Q Search',
+          width: '100%',
+          height: '400px',
+          searchPlaceholderText: 'Ask a question about your data...',
+          showQIcon: true,
+          showPinboard: true,
+          showSearchBar: true
+        };
+        this.qsearchConfig.set(defaultConfig);
+        await this.embedQSearch(defaultConfig.url);
+      }
+      
       this.errorMessage.set('');
       this.errorDetails.set(null);
-      this.logger.info('Reset to default completed successfully', defaultConfig, 'App');
+      this.logger.info(`Reset to default completed successfully for ${type}`, null, 'App');
     } catch (error) {
       const errorInfo = {
         message: error instanceof Error ? error.message : 'Unknown error occurred',
@@ -144,12 +227,23 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
         error: error,
         timestamp: new Date().toISOString(),
         operation: 'resetToDefault',
-        defaultConfig: defaultConfig
+        embeddingType: type
       };
       
-      this.logger.error('Failed to reset dashboard', errorInfo, 'App');
-      this.errorMessage.set(`Failed to reset dashboard: ${errorInfo.message}`);
+      this.logger.error(`Failed to reset ${type}`, errorInfo, 'App');
+      this.errorMessage.set(`Failed to reset ${type}: ${errorInfo.message}`);
       this.errorDetails.set(errorInfo);
+    }
+  }
+
+  private clearCurrentEmbedding() {
+    if (this.currentDashboard) {
+      this.currentDashboard = null;
+      this.logger.debug('Dashboard cleaned up', null, 'App');
+    }
+    if (this.currentQSearch) {
+      this.currentQSearch = null;
+      this.logger.debug('QSearch cleaned up', null, 'App');
     }
   }
 
@@ -163,12 +257,11 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
     // Wait for the view to be fully initialized and container to be available
     if (!this.isViewInitialized) {
       this.logger.debug('Waiting for view initialization', null, 'App');
-      // Wait a bit for the view to be ready
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     // Wait for container to be available with retry mechanism
-    const containerReady = await this.waitForContainer();
+    const containerReady = await this.waitForContainer('dashboard');
     if (!containerReady) {
       const error = 'Dashboard container not available after retries';
       this.logger.error(error, {
@@ -184,25 +277,22 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
     this.errorMessage.set('');
 
     try {
-      // Clean up existing dashboard if any
-      if (this.currentDashboard) {
-        this.logger.debug('Cleaning up existing QuickSight dashboard', null, 'App');
-        this.currentDashboard = null;
-      }
+      // Clean up existing content
+      this.clearCurrentEmbedding();
 
       // Embed the QuickSight dashboard
       this.logger.debug('Embedding QuickSight dashboard', { 
         url, 
         container: 'dashboardContainer',
-        width: this.embedConfig().width,
-        height: this.embedConfig().height
+        width: this.dashboardConfig().width,
+        height: this.dashboardConfig().height
       }, 'QuickSight');
 
       this.currentDashboard = await this.embeddingContext.embedDashboard({
         url: url,
         container: this.dashboardContainer.nativeElement,
-        width: this.embedConfig().width,
-        height: this.embedConfig().height,
+        width: this.dashboardConfig().width,
+        height: this.dashboardConfig().height,
         withIframePlaceholder: true,
         onChange: (changeEvent) => {
           this.logger.debug('Dashboard change event', changeEvent, 'QuickSight');
@@ -221,22 +311,89 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
-  private async waitForContainer(maxRetries: number = 5, delay: number = 100): Promise<boolean> {
+  private async embedQSearch(url: string) {
+    if (!this.embeddingContext) {
+      const error = 'Embedding context not initialized';
+      this.logger.error(error, null, 'App');
+      throw new Error(error);
+    }
+
+    // Wait for the view to be fully initialized and container to be available
+    if (!this.isViewInitialized) {
+      this.logger.debug('Waiting for view initialization', null, 'App');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Wait for container to be available with retry mechanism
+    const containerReady = await this.waitForContainer('qsearch');
+    if (!containerReady) {
+      const error = 'QSearch container not available after retries';
+      this.logger.error(error, {
+        isViewInitialized: this.isViewInitialized,
+        containerExists: !!this.qsearchContainer,
+        nativeElement: !!this.qsearchContainer?.nativeElement
+      }, 'App');
+      throw new Error(error);
+    }
+
+    this.logger.info('Embedding QuickSight QSearch', { url }, 'App');
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+
+    try {
+      // Clean up existing content
+      this.clearCurrentEmbedding();
+
+      // Embed the QuickSight QSearch
+      this.logger.debug('Embedding QuickSight QSearch', { 
+        url, 
+        container: 'qsearchContainer',
+        width: this.qsearchConfig().width,
+        height: this.qsearchConfig().height,
+        config: this.qsearchConfig()
+      }, 'QuickSight');
+
+      this.currentQSearch = await this.embeddingContext.embedQSearchBar({
+        url: url,
+        container: this.qsearchContainer.nativeElement,
+        width: this.qsearchConfig().width,
+        height: this.qsearchConfig().height,
+        withIframePlaceholder: true,
+        onChange: (changeEvent) => {
+          this.logger.debug('QSearch change event', changeEvent, 'QuickSight');
+        }
+      });
+
+      this.logger.info('Successfully embedded QuickSight QSearch', { 
+        url,
+        qsearchId: this.currentQSearch ? 'active' : 'none'
+      }, 'QuickSight');
+    } catch (error) {
+      this.logger.error('Error embedding QuickSight QSearch', error, 'QuickSight');
+      throw error;
+    } finally {
+      this.isLoading.set(false);
+    }
+  }
+
+  private async waitForContainer(type: 'dashboard' | 'qsearch', maxRetries: number = 5, delay: number = 100): Promise<boolean> {
+    const container = type === 'dashboard' ? this.dashboardContainer : this.qsearchContainer;
+    
     for (let i = 0; i < maxRetries; i++) {
-      if (this.dashboardContainer?.nativeElement) {
-        this.logger.debug(`Container ready after ${i + 1} attempts`, null, 'App');
+      if (container?.nativeElement) {
+        this.logger.debug(`${type} container ready after ${i + 1} attempts`, null, 'App');
         return true;
       }
       
-      this.logger.debug(`Waiting for container, attempt ${i + 1}/${maxRetries}`, null, 'App');
+      this.logger.debug(`Waiting for ${type} container, attempt ${i + 1}/${maxRetries}`, null, 'App');
       await new Promise(resolve => setTimeout(resolve, delay));
     }
     
-    this.logger.error('Container not ready after maximum retries', {
+    this.logger.error(`${type} container not ready after maximum retries`, {
       maxRetries,
       delay,
-      containerExists: !!this.dashboardContainer,
-      nativeElement: !!this.dashboardContainer?.nativeElement
+      containerExists: !!container,
+      nativeElement: !!container?.nativeElement
     }, 'App');
     return false;
   }
@@ -259,6 +416,47 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
     console.log('=== Current Debug Logs ===');
     console.log(logs);
     console.log('=== End of Logs ===');
+  }
+
+  // Configuration update methods
+  updateDashboardTitle(title: string) {
+    this.dashboardConfig.update(config => ({ ...config, title }));
+  }
+
+  updateDashboardWidth(width: string) {
+    this.dashboardConfig.update(config => ({ ...config, width }));
+  }
+
+  updateDashboardHeight(height: string) {
+    this.dashboardConfig.update(config => ({ ...config, height }));
+  }
+
+  updateQSearchTitle(title: string) {
+    this.qsearchConfig.update(config => ({ ...config, title }));
+  }
+
+  updateQSearchWidth(width: string) {
+    this.qsearchConfig.update(config => ({ ...config, width }));
+  }
+
+  updateQSearchHeight(height: string) {
+    this.qsearchConfig.update(config => ({ ...config, height }));
+  }
+
+  updateQSearchPlaceholder(placeholder: string) {
+    this.qsearchConfig.update(config => ({ ...config, searchPlaceholderText: placeholder }));
+  }
+
+  updateQSearchShowQIcon(show: boolean) {
+    this.qsearchConfig.update(config => ({ ...config, showQIcon: show }));
+  }
+
+  updateQSearchShowPinboard(show: boolean) {
+    this.qsearchConfig.update(config => ({ ...config, showPinboard: show }));
+  }
+
+  updateQSearchShowSearchBar(show: boolean) {
+    this.qsearchConfig.update(config => ({ ...config, showSearchBar: show }));
   }
 
   copyErrorDetails() {
