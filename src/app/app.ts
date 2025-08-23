@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { SafePipe } from './safe.pipe';
 import { environment } from '../environments/environment';
 import { createEmbeddingContext, EmbeddingContext, DashboardExperience } from 'amazon-quicksight-embedding-sdk';
-import { DebugLoggerService } from './debug-logger.service';
+import { DebugLoggerService } from '../logger';
 
 @Component({
   selector: 'app-root',
