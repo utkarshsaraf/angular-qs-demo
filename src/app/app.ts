@@ -26,7 +26,6 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
   protected readonly isLoading = signal(false);
   protected readonly errorMessage = signal('');
   protected readonly errorDetails = signal<any>(null);
-  protected readonly isQuickSightMode = signal(false);
 
   private embeddingContext: EmbeddingContext | null = null;
   private currentDashboard: DashboardExperience | null = null;
@@ -41,7 +40,7 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
     }, 'App');
 
     try {
-      // Create the embedding context for QuickSight (but don't use it initially)
+      // Create the embedding context for QuickSight
       this.logger.debug('Creating QuickSight embedding context', null, 'App');
       this.embeddingContext = await createEmbeddingContext({
         onChange: (changeEvent) => {
@@ -49,10 +48,7 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
         }
       });
       
-      // Initially load YouTube content in iframe mode
-      this.isQuickSightMode.set(false);
-      this.logger.info('Application initialized in iframe mode', { 
-        mode: 'iframe',
+      this.logger.info('Application initialized successfully', { 
         url: this.embedConfig().url 
       }, 'App');
     } catch (error) {
@@ -85,7 +81,7 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
   async updateEmbedUrl() {
     if (this.newUrl().trim()) {
       const url = this.newUrl().trim();
-      this.logger.info('Updating embed URL', { 
+      this.logger.info('Updating QuickSight dashboard URL', { 
         oldUrl: this.embedConfig().url,
         newUrl: url 
       }, 'App');
@@ -96,31 +92,12 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
       }));
       
       try {
-        // Check if it's a QuickSight URL
-        if (this.isQuickSightUrl(url)) {
-          this.logger.info('Detected QuickSight URL, switching to QuickSight mode', { url }, 'App');
-          
-          // Log container state before switching
-          this.logger.debug('Container state before QuickSight switch', {
-            isViewInitialized: this.isViewInitialized,
-            containerExists: !!this.dashboardContainer,
-            nativeElement: !!this.dashboardContainer?.nativeElement,
-            containerRef: this.dashboardContainer
-          }, 'App');
-          
-          await this.switchToQuickSightMode(url);
-        } else {
-          // Switch back to iframe mode for non-QuickSight URLs
-          this.logger.info('Detected non-QuickSight URL, switching to iframe mode', { url }, 'App');
-          this.switchToIframeMode();
-        }
-        
+        await this.embedDashboard(url);
         this.newUrl.set('');
         this.errorMessage.set('');
         this.errorDetails.set(null);
-        this.logger.info('URL update completed successfully', { 
-          finalUrl: url,
-          mode: this.isQuickSightMode() ? 'QuickSight' : 'iframe'
+        this.logger.info('Dashboard URL updated successfully', { 
+          finalUrl: url
         }, 'App');
       } catch (error) {
         const errorInfo = {
@@ -129,7 +106,6 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
           error: error,
           timestamp: new Date().toISOString(),
           url: url,
-          currentMode: this.isQuickSightMode(),
           containerState: {
             isViewInitialized: this.isViewInitialized,
             containerExists: !!this.dashboardContainer,
@@ -137,8 +113,8 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
           }
         };
         
-        this.logger.error('Failed to update content', errorInfo, 'App');
-        this.errorMessage.set(`Failed to update content: ${errorInfo.message}`);
+        this.logger.error('Failed to update dashboard', errorInfo, 'App');
+        this.errorMessage.set(`Failed to update dashboard: ${errorInfo.message}`);
         this.errorDetails.set(errorInfo);
       }
     }
@@ -157,8 +133,7 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
     this.embedConfig.set(defaultConfig);
     
     try {
-      // Reset to iframe mode for YouTube
-      this.switchToIframeMode();
+      await this.embedDashboard(defaultConfig.url);
       this.errorMessage.set('');
       this.errorDetails.set(null);
       this.logger.info('Reset to default completed successfully', defaultConfig, 'App');
@@ -172,24 +147,13 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
         defaultConfig: defaultConfig
       };
       
-      this.logger.error('Failed to reset content', errorInfo, 'App');
-      this.errorMessage.set(`Failed to reset content: ${errorInfo.message}`);
+      this.logger.error('Failed to reset dashboard', errorInfo, 'App');
+      this.errorMessage.set(`Failed to reset dashboard: ${errorInfo.message}`);
       this.errorDetails.set(errorInfo);
     }
   }
 
-  private isQuickSightUrl(url: string): boolean {
-    const isQuickSight = url.includes('quicksight.aws.amazon.com') || url.includes('quicksight.amazonaws.com');
-    this.logger.debug('URL type detection', { 
-      url, 
-      isQuickSight,
-      containsQuicksight: url.includes('quicksight'),
-      containsAws: url.includes('aws.amazon.com')
-    }, 'App');
-    return isQuickSight;
-  }
-
-  private async switchToQuickSightMode(url: string) {
+  private async embedDashboard(url: string) {
     if (!this.embeddingContext) {
       const error = 'Embedding context not initialized';
       this.logger.error(error, null, 'App');
@@ -215,7 +179,7 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
       throw new Error(error);
     }
 
-    this.logger.info('Switching to QuickSight mode', { url }, 'App');
+    this.logger.info('Embedding QuickSight dashboard', { url }, 'App');
     this.isLoading.set(true);
     this.errorMessage.set('');
 
@@ -225,12 +189,6 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
         this.logger.debug('Cleaning up existing QuickSight dashboard', null, 'App');
         this.currentDashboard = null;
       }
-
-      // Update title for QuickSight
-      this.embedConfig.update(config => ({
-        ...config,
-        title: 'QuickSight Dashboard'
-      }));
 
       // Embed the QuickSight dashboard
       this.logger.debug('Embedding QuickSight dashboard', { 
@@ -251,13 +209,12 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
         }
       });
 
-      this.isQuickSightMode.set(true);
-      this.logger.info('Successfully switched to QuickSight mode', { 
+      this.logger.info('Successfully embedded QuickSight dashboard', { 
         url,
         dashboardId: this.currentDashboard ? 'active' : 'none'
       }, 'QuickSight');
     } catch (error) {
-      this.logger.error('Error switching to QuickSight mode', error, 'QuickSight');
+      this.logger.error('Error embedding QuickSight dashboard', error, 'QuickSight');
       throw error;
     } finally {
       this.isLoading.set(false);
@@ -282,28 +239,6 @@ export class App implements OnInit, OnDestroy, AfterViewInit {
       nativeElement: !!this.dashboardContainer?.nativeElement
     }, 'App');
     return false;
-  }
-
-  private switchToIframeMode() {
-    this.logger.info('Switching to iframe mode', null, 'App');
-    
-    // Clean up QuickSight dashboard if any
-    if (this.currentDashboard) {
-      this.logger.debug('Cleaning up QuickSight dashboard', null, 'App');
-      this.currentDashboard = null;
-    }
-
-    // Update title for iframe content
-    this.embedConfig.update(config => ({
-      ...config,
-      title: 'Embedded Content'
-    }));
-
-    this.isQuickSightMode.set(false);
-    this.logger.info('Successfully switched to iframe mode', { 
-      url: this.embedConfig().url,
-      title: this.embedConfig().title
-    }, 'App');
   }
 
   // Debug methods for development

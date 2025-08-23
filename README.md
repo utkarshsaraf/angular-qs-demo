@@ -10,6 +10,7 @@ A modern Angular application for embedding and configuring Amazon QuickSight das
 - 📱 **Responsive design** that works on all devices
 - 🔒 **Official QuickSight Embedding SDK** for secure dashboard embedding
 - 📊 **Professional Dashboard Management** with loading states and error handling
+- 🐛 **Comprehensive Debug Logging** for development and troubleshooting
 
 ## Prerequisites
 
@@ -74,6 +75,7 @@ npm start
 2. **Update**: Click "Update Dashboard" to change the embedded content
 3. **Reset**: Use "Reset to Default" to return to default configuration
 4. **Monitor**: Watch for loading states and error messages
+5. **Debug**: Use the debug controls to download logs and troubleshoot issues
 
 ## Available Scripts
 
@@ -91,6 +93,9 @@ src/
 │   ├── app.ts          # Main application component with QuickSight SDK
 │   ├── app.html        # Main template with dashboard container
 │   └── safe.pipe.ts    # Security pipe for URLs
+├── logger/             # Debug logging services
+│   ├── index.ts        # Logger exports
+│   └── debug-logger.service.ts
 ├── environments/        # Environment configuration
 └── styles.css          # Global styles
 ```
@@ -112,6 +117,16 @@ This application leverages the [Amazon QuickSight Embedding SDK](https://www.npm
 - **Error Handling** - Comprehensive error management and user feedback
 - **Loading States** - Professional loading indicators during dashboard operations
 - **Responsive Design** - Automatic sizing and responsive behavior
+
+## Debug Features
+
+The application includes comprehensive debugging capabilities:
+
+- **Real-time Logging** - All operations are logged with timestamps
+- **Error Details** - Full error information including stack traces
+- **Log Download** - Download logs for offline analysis
+- **Console Viewing** - View logs directly in browser console
+- **Log Rotation** - Automatic log management to prevent memory issues
 
 ## Contributing
 

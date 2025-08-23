@@ -2,14 +2,14 @@
   <div class="max-w-4xl mx-auto space-y-8">
     <!-- Configuration Panel -->
     <div class="bg-white rounded-xl shadow-2xl p-8">
-      <h2 class="text-2xl font-bold text-center text-blue-600 mb-6">Configure Content Embed</h2>
+      <h2 class="text-2xl font-bold text-center text-blue-600 mb-6">Configure QuickSight Dashboard</h2>
       
       <div class="flex flex-col sm:flex-row gap-4 mb-4">
         <input 
           type="url" 
           [ngModel]="newUrl()" 
           (ngModelChange)="newUrl.set($event)"
-          placeholder="Enter QuickSight dashboard URL or other embed URL"
+          placeholder="Enter QuickSight dashboard embed URL"
           class="flex-1 px-4 py-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
         />
         <button 
@@ -18,7 +18,7 @@
           class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <span *ngIf="isLoading()">Loading...</span>
-          <span *ngIf="!isLoading()">Update Content</span>
+          <span *ngIf="!isLoading()">Update Dashboard</span>
         </button>
         <button 
           (click)="resetToDefault()" 
@@ -49,14 +49,11 @@
           </div>
           
           <!-- Additional Error Context -->
-          <div *ngIf="errorDetails()?.url || errorDetails()?.currentMode || errorDetails()?.operation" class="mb-2">
+          <div *ngIf="errorDetails()?.url || errorDetails()?.operation" class="mb-2">
             <p class="text-xs font-medium text-red-600 mb-1">Context:</p>
             <div class="text-xs text-red-600 space-y-1">
               <p *ngIf="errorDetails()?.url">
                 <span class="font-medium">URL:</span> {{ errorDetails()?.url }}
-              </p>
-              <p *ngIf="errorDetails()?.currentMode !== undefined">
-                <span class="font-medium">Mode:</span> {{ errorDetails()?.currentMode ? 'QuickSight' : 'Iframe' }}
               </p>
               <p *ngIf="errorDetails()?.operation">
                 <span class="font-medium">Operation:</span> {{ errorDetails()?.operation }}
@@ -85,11 +82,8 @@
       <!-- Current Configuration Info -->
       <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
         <p class="font-semibold mb-2 text-gray-700">Current Configuration:</p>
-        <p class="text-sm text-gray-600 mb-1">Content URL: {{ embedConfig().url }}</p>
+        <p class="text-sm text-gray-600 mb-1">Dashboard URL: {{ embedConfig().url }}</p>
         <p class="text-sm text-gray-600">Dimensions: {{ embedConfig().width }} × {{ embedConfig().height }}</p>
-        <p class="text-sm text-gray-600">Mode: <span class="font-medium" [class]="isQuickSightMode() ? 'text-blue-600' : 'text-green-600'">
-          {{ isQuickSightMode() ? 'QuickSight Dashboard' : 'Iframe Content' }}
-        </span></p>
       </div>
 
       <!-- Debug Controls (Development Only) -->
@@ -119,32 +113,19 @@
       </div>
     </div>
 
-    <!-- Content Embed Section -->
+    <!-- QuickSight Dashboard Section -->
     <div class="bg-white rounded-xl shadow-2xl p-8 text-center">
       <h1 class="text-3xl font-bold text-blue-600 mb-6">{{ embedConfig().title }}</h1>
       
       <!-- Loading State -->
       <div *ngIf="isLoading()" class="flex items-center justify-center py-12">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        <span class="ml-3 text-gray-600">Loading {{ isQuickSightMode() ? 'QuickSight Dashboard' : 'Content' }}...</span>
-      </div>
-
-      <!-- Iframe Content (YouTube initially) -->
-      <div *ngIf="!isQuickSightMode() && !isLoading()" class="mb-6 rounded-lg overflow-hidden shadow-lg">
-        <iframe 
-          [src]="embedConfig().url | safe" 
-          [width]="embedConfig().width"
-          [height]="embedConfig().height"
-          frameborder="0"
-          allowfullscreen
-          class="w-full"
-        >
-        </iframe>
+        <span class="ml-3 text-gray-600">Loading QuickSight Dashboard...</span>
       </div>
 
       <!-- QuickSight Dashboard Container -->
       <div 
-        *ngIf="isQuickSightMode() && !isLoading()"
+        *ngIf="!isLoading()"
         #dashboardContainer
         class="mb-6 rounded-lg overflow-hidden shadow-lg min-h-[400px]"
         [style.width]="embedConfig().width"
@@ -153,11 +134,10 @@
         <!-- QuickSight dashboard will be embedded here -->
       </div>
       
-      <!-- Content Info -->
+      <!-- Dashboard Info -->
       <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
-        <p class="text-sm text-gray-600 mb-1">Content Status: <span class="font-medium text-green-600">Active</span></p>
-        <p class="text-sm text-gray-600" *ngIf="isQuickSightMode()">Powered by Amazon QuickSight Embedding SDK</p>
-        <p class="text-sm text-gray-600" *ngIf="!isQuickSightMode()">Standard iframe embedding</p>
+        <p class="text-sm text-gray-600 mb-1">Dashboard Status: <span class="font-medium text-green-600">Active</span></p>
+        <p class="text-sm text-gray-600">Powered by Amazon QuickSight Embedding SDK</p>
       </div>
     </div>
   </div>
