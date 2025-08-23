@@ -1,4 +1,4 @@
-import { Component, signal, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/core';
+import { Component, signal, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { SafePipe } from './safe.pipe';
@@ -12,8 +12,8 @@ import { DebugLoggerService } from '../logger';
   imports: [CommonModule, SafePipe, FormsModule],
   templateUrl: './app.html'
 })
-export class App implements OnInit, OnDestroy {
-  @ViewChild('dashboardContainer', { static: true }) dashboardContainer!: ElementRef;
+export class App implements OnInit, OnDestroy, AfterViewInit {
+  @ViewChild('dashboardContainer', { static: false }) dashboardContainer!: ElementRef;
 
   protected readonly embedConfig = signal({
     title: environment.quicksight.defaultTitle,
@@ -25,10 +25,12 @@ export class App implements OnInit, OnDestroy {
   protected readonly newUrl = signal('');
   protected readonly isLoading = signal(false);
   protected readonly errorMessage = signal('');
+  protected readonly errorDetails = signal<any>(null);
   protected readonly isQuickSightMode = signal(false);
 
   private embeddingContext: EmbeddingContext | null = null;
   private currentDashboard: DashboardExperience | null = null;
+  private isViewInitialized = false;
 
   constructor(private logger: DebugLoggerService) {}
 
@@ -59,6 +61,18 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
+  ngAfterViewInit() {
+    // Use a small delay to ensure the view is fully rendered
+    setTimeout(() => {
+      this.isViewInitialized = true;
+      this.logger.debug('View initialized, dashboard container available', {
+        containerExists: !!this.dashboardContainer,
+        containerElement: !!this.dashboardContainer?.nativeElement,
+        containerRef: this.dashboardContainer
+      }, 'App');
+    }, 50);
+  }
+
   ngOnDestroy() {
     this.logger.info('Application destroying', null, 'App');
     if (this.currentDashboard) {
@@ -85,6 +99,15 @@ export class App implements OnInit, OnDestroy {
         // Check if it's a QuickSight URL
         if (this.isQuickSightUrl(url)) {
           this.logger.info('Detected QuickSight URL, switching to QuickSight mode', { url }, 'App');
+          
+          // Log container state before switching
+          this.logger.debug('Container state before QuickSight switch', {
+            isViewInitialized: this.isViewInitialized,
+            containerExists: !!this.dashboardContainer,
+            nativeElement: !!this.dashboardContainer?.nativeElement,
+            containerRef: this.dashboardContainer
+          }, 'App');
+          
           await this.switchToQuickSightMode(url);
         } else {
           // Switch back to iframe mode for non-QuickSight URLs
@@ -94,13 +117,29 @@ export class App implements OnInit, OnDestroy {
         
         this.newUrl.set('');
         this.errorMessage.set('');
+        this.errorDetails.set(null);
         this.logger.info('URL update completed successfully', { 
           finalUrl: url,
           mode: this.isQuickSightMode() ? 'QuickSight' : 'iframe'
         }, 'App');
       } catch (error) {
-        this.logger.error('Failed to update content', error, 'App');
-        this.errorMessage.set('Failed to update content');
+        const errorInfo = {
+          message: error instanceof Error ? error.message : 'Unknown error occurred',
+          stack: error instanceof Error ? error.stack : null,
+          error: error,
+          timestamp: new Date().toISOString(),
+          url: url,
+          currentMode: this.isQuickSightMode(),
+          containerState: {
+            isViewInitialized: this.isViewInitialized,
+            containerExists: !!this.dashboardContainer,
+            nativeElement: !!this.dashboardContainer?.nativeElement
+          }
+        };
+        
+        this.logger.error('Failed to update content', errorInfo, 'App');
+        this.errorMessage.set(`Failed to update content: ${errorInfo.message}`);
+        this.errorDetails.set(errorInfo);
       }
     }
   }
@@ -121,10 +160,21 @@ export class App implements OnInit, OnDestroy {
       // Reset to iframe mode for YouTube
       this.switchToIframeMode();
       this.errorMessage.set('');
+      this.errorDetails.set(null);
       this.logger.info('Reset to default completed successfully', defaultConfig, 'App');
     } catch (error) {
-      this.logger.error('Failed to reset content', error, 'App');
-      this.errorMessage.set('Failed to reset content');
+      const errorInfo = {
+        message: error instanceof Error ? error.message : 'Unknown error occurred',
+        stack: error instanceof Error ? error.stack : null,
+        error: error,
+        timestamp: new Date().toISOString(),
+        operation: 'resetToDefault',
+        defaultConfig: defaultConfig
+      };
+      
+      this.logger.error('Failed to reset content', errorInfo, 'App');
+      this.errorMessage.set(`Failed to reset content: ${errorInfo.message}`);
+      this.errorDetails.set(errorInfo);
     }
   }
 
@@ -143,6 +193,25 @@ export class App implements OnInit, OnDestroy {
     if (!this.embeddingContext) {
       const error = 'Embedding context not initialized';
       this.logger.error(error, null, 'App');
+      throw new Error(error);
+    }
+
+    // Wait for the view to be fully initialized and container to be available
+    if (!this.isViewInitialized) {
+      this.logger.debug('Waiting for view initialization', null, 'App');
+      // Wait a bit for the view to be ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Wait for container to be available with retry mechanism
+    const containerReady = await this.waitForContainer();
+    if (!containerReady) {
+      const error = 'Dashboard container not available after retries';
+      this.logger.error(error, {
+        isViewInitialized: this.isViewInitialized,
+        containerExists: !!this.dashboardContainer,
+        nativeElement: !!this.dashboardContainer?.nativeElement
+      }, 'App');
       throw new Error(error);
     }
 
@@ -195,6 +264,26 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
+  private async waitForContainer(maxRetries: number = 5, delay: number = 100): Promise<boolean> {
+    for (let i = 0; i < maxRetries; i++) {
+      if (this.dashboardContainer?.nativeElement) {
+        this.logger.debug(`Container ready after ${i + 1} attempts`, null, 'App');
+        return true;
+      }
+      
+      this.logger.debug(`Waiting for container, attempt ${i + 1}/${maxRetries}`, null, 'App');
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    
+    this.logger.error('Container not ready after maximum retries', {
+      maxRetries,
+      delay,
+      containerExists: !!this.dashboardContainer,
+      nativeElement: !!this.dashboardContainer?.nativeElement
+    }, 'App');
+    return false;
+  }
+
   private switchToIframeMode() {
     this.logger.info('Switching to iframe mode', null, 'App');
     
@@ -235,5 +324,33 @@ export class App implements OnInit, OnDestroy {
     console.log('=== Current Debug Logs ===');
     console.log(logs);
     console.log('=== End of Logs ===');
+  }
+
+  copyErrorDetails() {
+    if (this.errorDetails()) {
+      try {
+        const errorText = JSON.stringify(this.errorDetails(), null, 2);
+        navigator.clipboard.writeText(errorText).then(() => {
+          this.logger.info('Error details copied to clipboard', null, 'App');
+        }).catch(() => {
+          // Fallback for older browsers
+          const textArea = document.createElement('textarea');
+          textArea.value = errorText;
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+          this.logger.info('Error details copied to clipboard (fallback method)', null, 'App');
+        });
+      } catch (error) {
+        this.logger.error('Failed to copy error details', error, 'App');
+      }
+    }
+  }
+
+  clearErrors() {
+    this.errorMessage.set('');
+    this.errorDetails.set(null);
+    this.logger.info('Errors cleared by user', null, 'App');
   }
 }
