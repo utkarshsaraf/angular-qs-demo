@@ -1,61 +1,165 @@
 import json
 import boto3
 import os
+import logging
+import time
+from datetime import datetime
+from typing import Dict, Any, Optional
 
-quicksight = boto3.client("quicksight")
+# Configure comprehensive logging
+def setup_logging(log_level: str = "INFO") -> logging.Logger:
+    """
+    Set up comprehensive logging configuration
+    
+    Args:
+        log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    
+    Returns:
+        logging.Logger: Configured logger instance
+    """
+    # Create logger
+    logger = logging.getLogger("quicksight_job")
+    logger.setLevel(getattr(logging, log_level.upper()))
+    
+    # Prevent duplicate handlers
+    if logger.handlers:
+        return logger
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(getattr(logging, log_level.upper()))
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
+    )
+    console_handler.setFormatter(formatter)
+    
+    # Add handler to logger
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# Initialize logger
+logger = setup_logging()
+
+# Initialize AWS client with logging
+logger.info("Initializing AWS QuickSight client")
+try:
+    quicksight = boto3.client("quicksight")
+    logger.info("Successfully initialized QuickSight client")
+except Exception as e:
+    logger.error(f"Failed to initialize QuickSight client: {e}")
+    raise
 
 def lambda_handler(event, context):
-    account_id = os.environ["ACCOUNT_ID"]
-    region = os.environ.get("AWS_REGION", "us-east-1")
-    namespace = "default"   # change if you have custom namespace
-
-    # Step 1: List topics
-    topics = quicksight.list_topics(AwsAccountId=account_id)
-    if not topics.get("Topics"):
-        return {"statusCode": 500, "body": "No topics found in QuickSight."}
-
-    # Pick the first published topic (you can filter here if you want a specific one)
-    topic = None
-    for t in topics["Topics"]:
-        if t.get("TopicId") and t.get("Status") == "PUBLISHED":
-            topic = t
-            break
+    """
+    AWS Lambda handler function for generating QuickSight embed URLs
     
-    if not topic:
-        return {"statusCode": 500, "body": "No published topics found."}
-
-    topic_id = topic["TopicId"]
-    topic_arn = f"arn:aws:quicksight:{region}:{account_id}:topic/{topic_id}"
-
-    # Step 2: Generate embed URL
+    Args:
+        event: Lambda event object
+        context: Lambda context object
+    
+    Returns:
+        dict: Response with status code and body
+    """
+    start_time = time.time()
+    request_id = getattr(context, 'aws_request_id', 'unknown') if context else 'unknown'
+    
+    logger.info(f"Lambda function started - Request ID: {request_id}")
+    logger.info(f"Event received: {json.dumps(event, default=str)}")
+    
     try:
-        response = quicksight.generate_embed_url_for_anonymous_user(
-            AwsAccountId=account_id,
-            Namespace=namespace,
-            SessionLifetimeInMinutes=600,
-            AuthorizedResourceArns=[topic_arn],
-            ExperienceConfiguration={
-                "QSearchBar": {
-                    "InitialTopicId": topic_id
-                }
-            },
-            AllowedDomains=[
-                "http://localhost:4200",  # your Angular dev URL
-                "https://yourdomain.com"  # prod domain if needed
-            ]
-        )
-    except Exception as e:
-        return {"statusCode": 500, "body": str(e)}
+        # Extract environment variables
+        logger.debug("Extracting environment variables")
+        account_id = os.environ["ACCOUNT_ID"]
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        namespace = "default"   # change if you have custom namespace
+        
+        logger.info(f"Using Account ID: {account_id}, Region: {region}, Namespace: {namespace}")
+        
+        # Step 1: List topics
+        logger.info("Step 1: Listing QuickSight topics")
+        logger.debug(f"Calling list_topics for account: {account_id}")
+        
+        topics = quicksight.list_topics(AwsAccountId=account_id)
+        logger.info(f"Successfully retrieved {len(topics.get('Topics', []))} topics")
+        
+        if not topics.get("Topics"):
+            logger.error("No topics found in QuickSight account")
+            return {"statusCode": 500, "body": "No topics found in QuickSight."}
 
-    # Step 3: Return URL
-    return {
-        "statusCode": 200,
-        "body": json.dumps({
-            "EmbedUrl": response["EmbedUrl"],
-            "TopicId": topic_id,
-            "TopicArn": topic_arn
-        })
-    }
+        # Pick the first published topic (you can filter here if you want a specific one)
+        logger.debug("Searching for published topics")
+        topic = None
+        published_topics = []
+        
+        for t in topics["Topics"]:
+            logger.debug(f"Examining topic: {t.get('TopicId')} - Status: {t.get('Status')}")
+            if t.get("TopicId") and t.get("Status") == "PUBLISHED":
+                published_topics.append(t)
+                if topic is None:  # Pick the first one
+                    topic = t
+                    logger.info(f"Selected topic: {t.get('TopicId')} - Name: {t.get('Name', 'Unknown')}")
+        
+        logger.info(f"Found {len(published_topics)} published topics out of {len(topics['Topics'])} total topics")
+        
+        if not topic:
+            logger.error("No published topics found in QuickSight account")
+            return {"statusCode": 500, "body": "No published topics found."}
+
+        topic_id = topic["TopicId"]
+        topic_arn = f"arn:aws:quicksight:{region}:{account_id}:topic/{topic_id}"
+        logger.info(f"Using topic ID: {topic_id}")
+        logger.debug(f"Generated topic ARN: {topic_arn}")
+
+        # Step 2: Generate embed URL
+        logger.info("Step 2: Generating embed URL for anonymous user")
+        logger.debug(f"Session lifetime: 600 minutes, Allowed domains: {['http://localhost:4200', 'https://yourdomain.com']}")
+        
+        try:
+            response = quicksight.generate_embed_url_for_anonymous_user(
+                AwsAccountId=account_id,
+                Namespace=namespace,
+                SessionLifetimeInMinutes=600,
+                AuthorizedResourceArns=[topic_arn],
+                ExperienceConfiguration={
+                    "QSearchBar": {
+                        "InitialTopicId": topic_id
+                    }
+                },
+                AllowedDomains=[
+                    "http://localhost:4200",  # your Angular dev URL
+                    "https://yourdomain.com"  # prod domain if needed
+                ]
+            )
+            logger.info("Successfully generated embed URL")
+            logger.debug(f"Response keys: {list(response.keys())}")
+            
+        except Exception as e:
+            logger.error(f"Failed to generate embed URL: {e}", exc_info=True)
+            return {"statusCode": 500, "body": str(e)}
+
+        # Step 3: Return URL
+        execution_time = time.time() - start_time
+        logger.info(f"Lambda function completed successfully in {execution_time:.2f} seconds")
+        
+        result = {
+            "statusCode": 200,
+            "body": json.dumps({
+                "EmbedUrl": response["EmbedUrl"],
+                "TopicId": topic_id,
+                "TopicArn": topic_arn
+            })
+        }
+        
+        logger.debug(f"Returning result: {json.dumps(result, default=str)}")
+        return result
+        
+    except Exception as e:
+        execution_time = time.time() - start_time
+        logger.error(f"Lambda function failed after {execution_time:.2f} seconds: {e}", exc_info=True)
+        return {"statusCode": 500, "body": f"Internal server error: {str(e)}"}
 
 # Alternative function for non-Lambda usage
 def generate_quicksight_embed_url(account_id=None, region=None):
@@ -69,62 +173,117 @@ def generate_quicksight_embed_url(account_id=None, region=None):
     Returns:
         dict: Dictionary containing embed URL and topic information
     """
-    if account_id is None:
-        account_id = os.environ.get("ACCOUNT_ID")
-        if not account_id:
-            raise ValueError("ACCOUNT_ID environment variable not set")
+    start_time = time.time()
+    logger.info("Starting standalone QuickSight embed URL generation")
     
-    if region is None:
-        region = os.environ.get("AWS_REGION", "us-east-1")
-    
-    namespace = "default"
-    
-    # List topics
-    topics = quicksight.list_topics(AwsAccountId=account_id)
-    if not topics.get("Topics"):
-        raise Exception("No topics found in QuickSight")
-    
-    # Pick the first published topic
-    topic = None
-    for t in topics["Topics"]:
-        if t.get("TopicId") and t.get("Status") == "PUBLISHED":
-            topic = t
-            break
-    
-    if not topic:
-        raise Exception("No published topics found")
-    
-    topic_id = topic["TopicId"]
-    topic_arn = f"arn:aws:quicksight:{region}:{account_id}:topic/{topic_id}"
-    
-    # Generate embed URL
-    response = quicksight.generate_embed_url_for_anonymous_user(
-        AwsAccountId=account_id,
-        Namespace=namespace,
-        SessionLifetimeInMinutes=600,
-        AuthorizedResourceArns=[topic_arn],
-        ExperienceConfiguration={
-            "QSearchBar": {
-                "InitialTopicId": topic_id
-            }
-        },
-        AllowedDomains=[
-            "http://localhost:4200",
-            "https://yourdomain.com"
-        ]
-    )
-    
-    return {
-        "EmbedUrl": response["EmbedUrl"],
-        "TopicId": topic_id,
-        "TopicArn": topic_arn
-    }
+    try:
+        # Validate and set parameters
+        if account_id is None:
+            logger.debug("Account ID not provided, checking environment variable")
+            account_id = os.environ.get("ACCOUNT_ID")
+            if not account_id:
+                logger.error("ACCOUNT_ID environment variable not set")
+                raise ValueError("ACCOUNT_ID environment variable not set")
+            logger.info(f"Using ACCOUNT_ID from environment: {account_id}")
+        else:
+            logger.info(f"Using provided account ID: {account_id}")
+        
+        if region is None:
+            logger.debug("Region not provided, checking environment variable")
+            region = os.environ.get("AWS_REGION", "us-east-1")
+            logger.info(f"Using region from environment: {region}")
+        else:
+            logger.info(f"Using provided region: {region}")
+        
+        namespace = "default"
+        logger.debug(f"Using namespace: {namespace}")
+        
+        # List topics
+        logger.info("Listing QuickSight topics")
+        logger.debug(f"Calling list_topics for account: {account_id}")
+        
+        topics = quicksight.list_topics(AwsAccountId=account_id)
+        logger.info(f"Successfully retrieved {len(topics.get('Topics', []))} topics")
+        
+        if not topics.get("Topics"):
+            logger.error("No topics found in QuickSight account")
+            raise Exception("No topics found in QuickSight")
+        
+        # Pick the first published topic
+        logger.debug("Searching for published topics")
+        topic = None
+        published_topics = []
+        
+        for t in topics["Topics"]:
+            logger.debug(f"Examining topic: {t.get('TopicId')} - Status: {t.get('Status')} - Name: {t.get('Name', 'Unknown')}")
+            if t.get("TopicId") and t.get("Status") == "PUBLISHED":
+                published_topics.append(t)
+                if topic is None:  # Pick the first one
+                    topic = t
+                    logger.info(f"Selected topic: {t.get('TopicId')} - Name: {t.get('Name', 'Unknown')}")
+        
+        logger.info(f"Found {len(published_topics)} published topics out of {len(topics['Topics'])} total topics")
+        
+        if not topic:
+            logger.error("No published topics found in QuickSight account")
+            raise Exception("No published topics found")
+        
+        topic_id = topic["TopicId"]
+        topic_arn = f"arn:aws:quicksight:{region}:{account_id}:topic/{topic_id}"
+        logger.info(f"Using topic ID: {topic_id}")
+        logger.debug(f"Generated topic ARN: {topic_arn}")
+        
+        # Generate embed URL
+        logger.info("Generating embed URL for anonymous user")
+        logger.debug(f"Session lifetime: 600 minutes, Allowed domains: {['http://localhost:4200', 'https://yourdomain.com']}")
+        
+        response = quicksight.generate_embed_url_for_anonymous_user(
+            AwsAccountId=account_id,
+            Namespace=namespace,
+            SessionLifetimeInMinutes=600,
+            AuthorizedResourceArns=[topic_arn],
+            ExperienceConfiguration={
+                "QSearchBar": {
+                    "InitialTopicId": topic_id
+                }
+            },
+            AllowedDomains=[
+                "http://localhost:4200",
+                "https://yourdomain.com"
+            ]
+        )
+        
+        logger.info("Successfully generated embed URL")
+        logger.debug(f"Response keys: {list(response.keys())}")
+        
+        execution_time = time.time() - start_time
+        logger.info(f"Standalone function completed successfully in {execution_time:.2f} seconds")
+        
+        result = {
+            "EmbedUrl": response["EmbedUrl"],
+            "TopicId": topic_id,
+            "TopicArn": topic_arn
+        }
+        
+        logger.debug(f"Returning result: {json.dumps(result, default=str)}")
+        return result
+        
+    except Exception as e:
+        execution_time = time.time() - start_time
+        logger.error(f"Standalone function failed after {execution_time:.2f} seconds: {e}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
     # Example usage for standalone execution
+    logger.info("Starting standalone execution example")
+    
     try:
         result = generate_quicksight_embed_url()
+        logger.info("Successfully generated embed URL in standalone mode")
         print("Successfully generated embed URL:")
         print(json.dumps(result, indent=2))
     except Exception as e:
+        logger.error(f"Standalone execution failed: {e}")
         print(f"Error: {e}")
+    
+    logger.info("Standalone execution completed")
