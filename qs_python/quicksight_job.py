@@ -6,10 +6,22 @@ import time
 from datetime import datetime
 from typing import Dict, Any, Optional
 
-# Configure comprehensive logging
+"""
+AWS Lambda QuickSight Job with CloudWatch-optimized logging
+
+This module provides comprehensive logging optimized for AWS Lambda execution:
+- Structured logging for CloudWatch Insights queries
+- Lambda context information (request ID, function name, version, memory)
+- Performance metrics (execution time, memory usage)
+- Error correlation with request context
+- Environment variable validation
+- CloudWatch-friendly log formatting
+"""
+
+# Configure Lambda-optimized logging
 def setup_logging(log_level: str = "INFO") -> logging.Logger:
     """
-    Set up comprehensive logging configuration
+    Set up Lambda-optimized logging configuration for CloudWatch
     
     Args:
         log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -25,13 +37,13 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
     if logger.handlers:
         return logger
     
-    # Create console handler
+    # Create console handler (Lambda automatically sends stdout/stderr to CloudWatch)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(getattr(logging, log_level.upper()))
     
-    # Create formatter
+    # Create formatter optimized for CloudWatch
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
+        '%(asctime)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
     )
     console_handler.setFormatter(formatter)
     
@@ -40,8 +52,8 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
     
     return logger
 
-# Initialize logger
-logger = setup_logging()
+# Initialize logger with Lambda-appropriate level
+logger = setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
 
 # Initialize AWS client with logging
 logger.info("Initializing AWS QuickSight client")
@@ -65,9 +77,19 @@ def lambda_handler(event, context):
     """
     start_time = time.time()
     request_id = getattr(context, 'aws_request_id', 'unknown') if context else 'unknown'
+    function_name = getattr(context, 'function_name', 'unknown') if context else 'unknown'
+    function_version = getattr(context, 'function_version', 'unknown') if context else 'unknown'
     
-    logger.info(f"Lambda function started - Request ID: {request_id}")
-    logger.info(f"Event received: {json.dumps(event, default=str)}")
+    # Lambda-specific structured logging
+    logger.info(f"Lambda execution started", extra={
+        'request_id': request_id,
+        'function_name': function_name,
+        'function_version': function_version,
+        'event_type': type(event).__name__,
+        'event_size': len(json.dumps(event, default=str))
+    })
+    
+    logger.debug(f"Event details: {json.dumps(event, default=str)}")
     
     try:
         # Extract environment variables
@@ -76,7 +98,14 @@ def lambda_handler(event, context):
         region = os.environ.get("AWS_REGION", "us-east-1")
         namespace = "default"   # change if you have custom namespace
         
-        logger.info(f"Using Account ID: {account_id}, Region: {region}, Namespace: {namespace}")
+        # Lambda environment logging
+        logger.info(f"Lambda environment configured", extra={
+            'account_id': account_id,
+            'region': region,
+            'namespace': namespace,
+            'lambda_function_name': function_name,
+            'lambda_function_version': function_version
+        })
         
         # Step 1: List topics
         logger.info("Step 1: Listing QuickSight topics")
@@ -142,7 +171,17 @@ def lambda_handler(event, context):
 
         # Step 3: Return URL
         execution_time = time.time() - start_time
-        logger.info(f"Lambda function completed successfully in {execution_time:.2f} seconds")
+        memory_used = getattr(context, 'memory_limit_in_mb', 'unknown') if context else 'unknown'
+        
+        # Lambda success metrics
+        logger.info(f"Lambda execution completed successfully", extra={
+            'request_id': request_id,
+            'execution_time_ms': round(execution_time * 1000, 2),
+            'memory_used_mb': memory_used,
+            'status_code': 200,
+            'topics_found': len(topics.get('Topics', [])),
+            'published_topics': len(published_topics)
+        })
         
         result = {
             "statusCode": 200,
@@ -158,7 +197,17 @@ def lambda_handler(event, context):
         
     except Exception as e:
         execution_time = time.time() - start_time
-        logger.error(f"Lambda function failed after {execution_time:.2f} seconds: {e}", exc_info=True)
+        memory_used = getattr(context, 'memory_limit_in_mb', 'unknown') if context else 'unknown'
+        
+        # Lambda error metrics
+        logger.error(f"Lambda execution failed", extra={
+            'request_id': request_id,
+            'execution_time_ms': round(execution_time * 1000, 2),
+            'memory_used_mb': memory_used,
+            'error_type': type(e).__name__,
+            'error_message': str(e)
+        }, exc_info=True)
+        
         return {"statusCode": 500, "body": f"Internal server error: {str(e)}"}
 
 # Alternative function for non-Lambda usage
@@ -273,17 +322,4 @@ def generate_quicksight_embed_url(account_id=None, region=None):
         logger.error(f"Standalone function failed after {execution_time:.2f} seconds: {e}", exc_info=True)
         raise
 
-if __name__ == "__main__":
-    # Example usage for standalone execution
-    logger.info("Starting standalone execution example")
-    
-    try:
-        result = generate_quicksight_embed_url()
-        logger.info("Successfully generated embed URL in standalone mode")
-        print("Successfully generated embed URL:")
-        print(json.dumps(result, indent=2))
-    except Exception as e:
-        logger.error(f"Standalone execution failed: {e}")
-        print(f"Error: {e}")
-    
-    logger.info("Standalone execution completed")
+
